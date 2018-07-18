@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DGA-MI <clipos@ssi.gouv.fr>
+Date: Fri, 19 Feb 2016 10:07:44 +0100
+Subject: [PATCH 1/4] Fix build with gcc5.0 : upstream patch
+ 8a862ef79836eff1cd9a753eee5b3384616ccf58
+---
+ kernel/pf_ring.c | 14 +++++++-------
+ 1 file changed, 7 insertions(+), 7 deletions(-)
+
+diff --git a/kernel/pf_ring.c b/kernel/pf_ring.c
+index 1736c1d..1188a82 100644
+--- a/kernel/pf_ring.c
++++ b/kernel/pf_ring.c
+@@ -173,7 +173,7 @@ static rwlock_t virtual_filtering_lock =
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+   RW_LOCK_UNLOCKED
+ #else
+-  (rwlock_t)__RW_LOCK_UNLOCKED(virtual_filtering_lock)
++  __RW_LOCK_UNLOCKED(virtual_filtering_lock)
+ #endif
+ ;
+ 
+@@ -183,7 +183,7 @@ static rwlock_t ring_cluster_lock =
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+   RW_LOCK_UNLOCKED
+ #else
+-  (rwlock_t)__RW_LOCK_UNLOCKED(virtual_filtering_lock)
++  __RW_LOCK_UNLOCKED(virtual_filtering_lock)
+ #endif
+ ;
+ 
+@@ -211,7 +211,7 @@ static rwlock_t cluster_fragments_lock =
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+   RW_LOCK_UNLOCKED
+ #else
+-  (rwlock_t)__RW_LOCK_UNLOCKED(cluster_fragments_lock)
++  __RW_LOCK_UNLOCKED(cluster_fragments_lock)
+ #endif
+ ;
+ 
+@@ -230,7 +230,7 @@ static rwlock_t dna_cluster_lock =
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+   RW_LOCK_UNLOCKED
+ #else
+-  (rwlock_t) __RW_LOCK_UNLOCKED(dna_cluster_lock)
++  __RW_LOCK_UNLOCKED(dna_cluster_lock)
+ #endif
+ ;
+ 
+@@ -240,7 +240,7 @@ static rwlock_t cluster_referee_lock =
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+   RW_LOCK_UNLOCKED
+ #else
+-  (rwlock_t) __RW_LOCK_UNLOCKED(cluster_referee_lock)
++  __RW_LOCK_UNLOCKED(cluster_referee_lock)
+ #endif
+ ;
+ 
+@@ -278,7 +278,7 @@ static inline void init_ring_readers(void)      {
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+     RW_LOCK_UNLOCKED
+ #else
+-    (rwlock_t) __RW_LOCK_UNLOCKED(ring_mgmt_lock)
++    __RW_LOCK_UNLOCKED(ring_mgmt_lock)
+ #endif
+     ;
+ }
+@@ -511,7 +511,7 @@ void init_lockless_list(lockless_list *l)
+ #if(LINUX_VERSION_CODE < KERNEL_VERSION(2,6,39))
+     RW_LOCK_UNLOCKED
+ #else
+-    (rwlock_t) __RW_LOCK_UNLOCKED(l->list_lock)
++    __RW_LOCK_UNLOCKED(l->list_lock)
+ #endif
+     ;
+ }
+-- 
+1.8.3.1
+

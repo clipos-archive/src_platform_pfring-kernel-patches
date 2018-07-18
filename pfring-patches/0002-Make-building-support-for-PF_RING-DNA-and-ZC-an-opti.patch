@@ -1,0 +1,573 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DGA-MI <clipos@ssi.gouv.fr>
+Date: Mon, 22 Aug 2016 17:04:15 +0200
+Subject: [PATCH 2/4] Make building support for PF_RING DNA and ZC an option
+
+This makes it possible to secure the PF_RING kernel interface by disabling
+access to low level hardware and kernel structures from userland.
+
+To build support for DNA, HAVE_DNA must be defined in the makefile.
+To build support for ZC, HAVE_PF_RING_ZC must be defined in the makefile.
+
+All flags combinations are supported.
+---
+ kernel/linux/pf_ring.h |   8 ++++
+ kernel/pf_ring.c       | 125 +++++++++++++++++++++++++++++++++++++++++++++++--
+ 2 files changed, 130 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/linux/pf_ring.h b/kernel/linux/pf_ring.h
+index 29d2621..90a002e 100644
+--- a/kernel/linux/pf_ring.h
++++ b/kernel/linux/pf_ring.h
+@@ -786,11 +786,13 @@ typedef struct {
+ #define IFNAMSIZ 16
+ #endif
+ 
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+ typedef struct {
+   zc_dev_operation operation;
+   char device_name[IFNAMSIZ];
+   int32_t channel_id;
+ } zc_dev_mapping;
++#endif
+ 
+ /* ************************************************* */
+ 
+@@ -1005,6 +1007,7 @@ typedef enum {
+   cluster_master = 1
+ } cluster_client_type;
+ 
++#ifdef HAVE_DNA
+ struct dna_cluster {
+   u_int32_t id;
+   u_int32_t num_slaves;
+@@ -1029,6 +1032,7 @@ struct dna_cluster {
+ 
+   struct list_head list;
+ };
++#endif
+ 
+ /* ************************************************* */
+ 
+@@ -1131,9 +1135,11 @@ struct pf_ring_socket {
+     struct net_device *last_tx_dev;
+   } tx;
+ 
++#if defined(HAVE_DNA) || defined(HAVE_PF_RING_ZC)
+   /* Direct NIC Access */
+   zc_dev_info *zc_dev;
+   zc_dev_list *zc_device_entry;
++#endif
+ 
+   /* Extra DMA memory */
+   struct dma_memory_info *extra_dma_memory;
+@@ -1189,10 +1195,12 @@ struct pf_ring_socket {
+   u_int8_t kernel_consumer_plugin_id; /* If != 0 it identifies a plugin responsible for consuming packets */
+   char *kernel_consumer_options, *kernel_consumer_private;
+ 
++#ifdef HAVE_DNA
+   /* DNA cluster */
+   struct dna_cluster *dna_cluster;
+   cluster_client_type dna_cluster_type;
+   u_int32_t dna_cluster_slave_id; /* slave only */
++#endif
+ 
+   /* Generic cluster */
+   struct cluster_referee *cluster_referee;
+diff --git a/kernel/pf_ring.c b/kernel/pf_ring.c
+index 1188a82..b65c840 100644
+--- a/kernel/pf_ring.c
++++ b/kernel/pf_ring.c
+@@ -224,6 +224,7 @@ static u_int plugin_registration_size = 0;
+ static struct pfring_plugin_registration *plugin_registration[MAX_PLUGIN_ID] = { NULL };
+ static u_short max_registered_plugin_id = 0;
+ 
++#ifdef HAVE_DNA
+ /* List of DNA clusters */
+ static struct list_head dna_cluster_list;
+ static rwlock_t dna_cluster_lock =
+@@ -233,6 +234,7 @@ static rwlock_t dna_cluster_lock =
+   __RW_LOCK_UNLOCKED(dna_cluster_lock)
+ #endif
+ ;
++#endif
+ 
+ /* List of generic cluster referees */
+ static struct list_head cluster_referee_list;
+@@ -330,8 +332,10 @@ static int skb_ring_handler(struct sk_buff *skb, u_char recv_packet,
+ 			    int32_t channel_id, u_int32_t num_rx_channels);
+ static int buffer_ring_handler(struct net_device *dev, char *data, int len);
+ static int remove_from_cluster(struct sock *sock, struct pf_ring_socket *pfr);
++#if defined(HAVE_DNA) || defined(HAVE_PF_RING_ZC)
+ static int pfring_map_zc_dev(struct pf_ring_socket *pfr,
+ 			       zc_dev_mapping *mapping);
++#endif
+ 
+ static int  get_fragment_app_id(u_int32_t ipv4_src_host, u_int32_t ipv4_dst_host, u_int16_t fragment_id, u_int8_t more_fragments);
+ static void add_fragment_app_id(u_int32_t ipv4_src_host, u_int32_t ipv4_dst_host, u_int16_t fragment_id, u_int8_t app_id);
+@@ -1498,8 +1502,12 @@ static int ring_proc_get_info(struct seq_file *m, void *data_not_used)
+ 
+       seq_printf(m, "\n");
+ 
++#ifdef HAVE_DNA
+       seq_printf(m, "Active             : %d\n", pfr->ring_active || pfr->dna_cluster);
++#endif
++#ifdef HAVE_PF_RING_ZC
+       seq_printf(m, "Breed              : %s\n", (pfr->zc_device_entry != NULL) ? (pfr->ring_netdev->is_zc_device == 1 ? "DNA" : "ZC") : "Standard");
++#endif
+       seq_printf(m, "Appl. Name         : %s\n", pfr->appl_name ? pfr->appl_name : "<unknown>");
+       seq_printf(m, "Socket Mode        : %s\n", sockmode2string(pfr->mode));
+       if (pfr->mode != send_only_mode) {
+@@ -1513,6 +1521,7 @@ static int ring_proc_get_info(struct seq_file *m, void *data_not_used)
+         seq_printf(m, "Num Poll Calls     : %u\n", pfr->num_poll_calls);
+       }
+ 
++#if defined(HAVE_DNA) || defined(HAVE_PF_RING_ZC)
+       if(pfr->zc_device_entry != NULL) {
+         /* DNA/ZC */
+         seq_printf(m, "Channel Id         : %d\n", pfr->zc_device_entry->dev.channel_id);
+@@ -1527,11 +1536,16 @@ static int ring_proc_get_info(struct seq_file *m, void *data_not_used)
+ 			  pfr->zc_device_entry->dev.mem_info.tx.packet_memory_chunk_len   )
+ 			+ pfr->zc_device_entry->dev.mem_info.rx.descr_packet_memory_tot_len
+ 			+ pfr->zc_device_entry->dev.mem_info.tx.descr_packet_memory_tot_len);
++#ifdef HAVE_DNA
+ 	if(pfr->dna_cluster && pfr->dna_cluster_type == cluster_master && pfr->dna_cluster->stats) {
+ 	  seq_printf(m, "Cluster: Tot Recvd : %lu\n", (unsigned long)pfr->dna_cluster->stats->tot_rx_packets);
+ 	  seq_printf(m, "Cluster: Tot Sent  : %lu\n", (unsigned long)pfr->dna_cluster->stats->tot_tx_packets);
+ 	}
++#endif
+       } else if(fsi != NULL) {
++#else
++      if(fsi != NULL) {
++#endif
+         /* Standard PF_RING */
+ 	seq_printf(m, "Channel Id Mask    : 0x%016llX\n", pfr->channel_id_mask);
+ 	seq_printf(m, "Cluster Id         : %d\n", pfr->cluster_id);
+@@ -5058,6 +5072,7 @@ static void free_contiguous_memory(unsigned long mem, u_int mem_len)
+   }
+ }
+ 
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+ static unsigned long __get_free_pages_node(int nid, gfp_t gfp_mask, unsigned int order) {
+   struct page *page;
+ 
+@@ -5192,6 +5207,7 @@ static struct dma_memory_info *allocate_extra_dma_memory(struct device *hwdev,
+ 
+   return dma_memory;
+ }
++#endif
+ 
+ static void free_extra_dma_memory(struct dma_memory_info *dma_memory)
+ {
+@@ -5227,6 +5243,7 @@ static void free_extra_dma_memory(struct dma_memory_info *dma_memory)
+ 
+ /* ********************************** */
+ 
++#ifdef HAVE_DNA
+ static struct dna_cluster* dna_cluster_create(u_int32_t dna_cluster_id, u_int32_t num_slots,
+                                               u_int32_t num_slaves, u_int64_t slave_mem_len,
+ 					      u_int64_t master_persistent_mem_len, socket_mode mode,
+@@ -5493,6 +5510,7 @@ unlock:
+ 
+   return dnac;
+ }
++#endif
+ 
+ /* ********************************** */
+ 
+@@ -5940,12 +5958,15 @@ static int ring_release(struct socket *sock)
+   if(ring_memory_ptr != NULL && free_ring_memory)
+     vfree(ring_memory_ptr);
+ 
++#ifdef HAVE_DNA
+   if(pfr->dna_cluster != NULL)
+     dna_cluster_remove(pfr->dna_cluster, pfr->dna_cluster_type, pfr->dna_cluster_slave_id);
++#endif
+ 
+   if(pfr->cluster_referee != NULL)
+     remove_cluster_referee(pfr);
+ 
++#ifdef HAVE_PF_RING_ZC
+   if(pfr->zc_device_entry != NULL) {
+     zc_dev_mapping mapping;
+ 
+@@ -5954,6 +5975,7 @@ static int ring_release(struct socket *sock)
+     mapping.channel_id = pfr->zc_device_entry->dev.channel_id;
+     pfring_map_zc_dev(pfr, &mapping);
+   }
++#endif
+ 
+   if(pfr->extra_dma_memory != NULL) {
+     free_extra_dma_memory(pfr->extra_dma_memory);
+@@ -6187,7 +6209,10 @@ static int ring_mmap(struct file *file,
+ {
+   struct sock *sk = sock->sk;
+   struct pf_ring_socket *pfr = ring_sk(sk);
+-  int i, rc;
++#if defined(HAVE_DNA)
++  int i;
++#endif
++  int rc;
+   unsigned long mem_id = vma->vm_pgoff; /* using vm_pgoff as memory id */
+   unsigned long size = (unsigned long)(vma->vm_end - vma->vm_start);
+ 
+@@ -6209,6 +6234,7 @@ static int ring_mmap(struct file *file,
+   if(mem_id >= 100) {
+     mem_id -= 100;
+ 
++#if defined(HAVE_PF_RING_ZC)
+     if(pfr->zc_dev) {
+       if(mem_id < pfr->zc_dev->mem_info.rx.packet_memory_num_chunks) {
+         /* DNA: RX packet memory */
+@@ -6244,7 +6270,9 @@ static int ring_mmap(struct file *file,
+ 	return(0);
+       }
+     }
++#endif
+ 
++#if defined(HAVE_DNA)
+     if(pfr->dna_cluster) {
+       /* DNA cluster extra DMA memory */
+ 
+@@ -6277,6 +6305,7 @@ static int ring_mmap(struct file *file,
+ 
+       return(0);
+     }
++#endif
+ 
+     printk("[PF_RING] %s() failed: not DNA nor DNA cluster\n", __FUNCTION__);
+     return(-EINVAL);
+@@ -6285,10 +6314,18 @@ static int ring_mmap(struct file *file,
+   switch(mem_id) {
+     /* RING */
+     case 0:
+-      if(pfr->zc_dev != NULL || pfr->dna_cluster != NULL) {
++#ifdef HAVE_PF_RING_ZC
++      if(pfr->zc_dev != NULL) {
+         printk("[PF_RING] %s(): trying to map ring memory on DNA/ZC socket\n", __FUNCTION__);
+ 	return(-EINVAL);
+       }
++#endif
++#ifdef HAVE_DNA
++      if(pfr->dna_cluster != NULL) {
++        printk("[PF_RING] %s(): trying to map ring memory on DNA/ZC socket\n", __FUNCTION__);
++	return(-EINVAL);
++      }
++#endif
+ 
+       if(pfr->ring_memory == NULL) {
+         if(ring_alloc_mem(sk) != 0) {
+@@ -6313,6 +6350,7 @@ static int ring_mmap(struct file *file,
+ 
+       break;
+     case 1:
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+       /* DNA/ZC: RX packet descriptors */
+       if(pfr->zc_dev == NULL) {
+         if(unlikely(enable_debug))
+@@ -6322,9 +6360,14 @@ static int ring_mmap(struct file *file,
+ 
+       if((rc = do_memory_mmap(vma, 0, size, (void *) pfr->zc_dev->rx_descr_packet_memory, 0, VM_LOCKED, 1)) < 0)
+ 	return(rc);
++#else
++      printk("[PF_RING] %s() failed: operation for DNA/ZC only (not supported)", __FUNCTION__);
++      return(-EINVAL);
++#endif
+ 
+       break;
+     case 2:
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+       /* DNA/ZC: Physical card memory */
+       if(pfr->zc_dev == NULL) {
+         if(unlikely(enable_debug))
+@@ -6340,9 +6383,14 @@ static int ring_mmap(struct file *file,
+ #endif
+ 	                                                                                  ), 2)) < 0)
+ 	return(rc);
++#else
++      printk("[PF_RING] %s() failed: operation for DNA/ZC only (not supported)", __FUNCTION__);
++      return(-EINVAL);
++#endif
+ 
+       break;
+     case 3:
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+       /* DNA/ZC: TX packet descriptors */
+       if(pfr->zc_dev == NULL) {
+         if(unlikely(enable_debug))
+@@ -6352,9 +6400,14 @@ static int ring_mmap(struct file *file,
+ 
+       if((rc = do_memory_mmap(vma, 0, size, (void *) pfr->zc_dev->tx_descr_packet_memory, 0, VM_LOCKED, 1)) < 0)
+ 	return(rc);
++#else
++      printk("[PF_RING] %s() failed: operation for DNA/ZC only (not supported)", __FUNCTION__);
++      return(-EINVAL);
++#endif
+ 
+       break;
+     case 4:
++#ifdef HAVE_DNA
+       /* DNA cluster shared memory (master) */
+       if(pfr->dna_cluster == NULL || pfr->dna_cluster_type != cluster_master) {
+         if(unlikely(enable_debug))
+@@ -6377,9 +6430,14 @@ static int ring_mmap(struct file *file,
+ 
+       if((rc = do_memory_mmap(vma, 0, size, (void *) pfr->dna_cluster->shared_memory, 0, VM_LOCKED, 0)) < 0)
+         return(rc);
++#else
++      printk("[PF_RING] %s() failed: operation for DNA cluster master only (not supported)", __FUNCTION__);
++      return(-EINVAL);
++#endif
+ 
+       break;
+     case 5:
++#ifdef HAVE_DNA
+       /* DNA cluster shared memory (slave) */
+       if(pfr->dna_cluster == NULL || pfr->dna_cluster_type != cluster_slave) {
+         if(unlikely(enable_debug))
+@@ -6404,9 +6462,14 @@ static int ring_mmap(struct file *file,
+ 		 (pfr->dna_cluster->slave_shared_memory_len / PAGE_SIZE) * pfr->dna_cluster_slave_id,
+ 		 VM_LOCKED, 0)) < 0)
+         return(rc);
++#else
++      printk("[PF_RING] %s() failed: operation for DNA cluster slave only (not supported)", __FUNCTION__);
++      return(-EINVAL);
++#endif
+ 
+       break;
+     case 6:
++#ifdef HAVE_DNA
+       /* DNA cluster persistent memory (master) */
+       if(pfr->dna_cluster == NULL || pfr->dna_cluster_type != cluster_master) {
+         if(unlikely(enable_debug))
+@@ -6423,6 +6486,10 @@ static int ring_mmap(struct file *file,
+ 
+       if((rc = do_memory_mmap(vma, 0, size, (void *) pfr->dna_cluster->master_persistent_memory, 0, VM_LOCKED, 0)) < 0)
+         return(rc);
++#else
++      printk("[PF_RING] %s() failed: operation for DNA cluster master only (not supported)", __FUNCTION__);
++      return(-EINVAL);
++#endif
+ 
+       break;
+     default:
+@@ -6630,7 +6697,10 @@ unsigned int ring_poll(struct file *file,
+ 		       struct socket *sock, poll_table * wait)
+ {
+   struct pf_ring_socket *pfr = ring_sk(sock->sk);
+-  int rc, mask = 0;
++#ifdef HAVE_PF_RING_ZC
++  int rc = 0;
++#endif
++  int mask = 0;
+ 
+   //if(unlikely(enable_debug))
+   //  printk("[PF_RING] -- poll called [ZC: %p][%s]\n", pfr->zc_dev,
+@@ -6641,7 +6711,9 @@ unsigned int ring_poll(struct file *file,
+   if(unlikely(pfr->ring_shutdown))
+     return(mask);
+ 
++#ifdef HAVE_PF_RING_ZC
+   if(pfr->zc_dev == NULL) {
++#endif
+     /* PF_RING mode (No DNA/ZC) */
+ 
+     // if(unlikely(enable_debug))
+@@ -6651,12 +6723,14 @@ unsigned int ring_poll(struct file *file,
+     // smp_rmb();
+ 
+     /* DNA cluster */
++#ifdef HAVE_DNA
+     if(pfr->dna_cluster != NULL && pfr->dna_cluster_type == cluster_slave) {
+       poll_wait(file, &pfr->ring_slots_waitqueue, wait);
+       // if(1) /* queued packets info not available */
+         mask |= POLLIN | POLLRDNORM;
+       return(mask);
+     }
++#endif
+ 
+     if(pfr->tx.enable_tx_with_bounce && pfr->header_len == long_pkt_header) {
+       write_lock_bh(&pfr->tx.consume_tx_packets_lock);
+@@ -6677,6 +6751,7 @@ unsigned int ring_poll(struct file *file,
+       mask |= POLLIN | POLLRDNORM;
+ 
+     return(mask);
++#ifdef HAVE_PF_RING_ZC
+   } else {
+     /* DNA/ZC mode */
+     /* enable_debug = 1;  */
+@@ -6723,6 +6798,7 @@ unsigned int ring_poll(struct file *file,
+       return(0);
+     }
+   }
++#endif
+ }
+ 
+ /* ************************************* */
+@@ -6910,6 +6986,7 @@ static int add_sock_to_cluster(struct sock *sock,
+ 
+ /* ************************************* */
+ 
++#if defined(HAVE_DNA) || defined(HAVE_PF_RING_ZC)
+ static int pfring_map_zc_dev(struct pf_ring_socket *pfr,
+ 			       zc_dev_mapping *mapping)
+ {
+@@ -7044,6 +7121,7 @@ static int pfring_map_zc_dev(struct pf_ring_socket *pfr,
+ 
+   return(-1);
+ }
++#endif
+ 
+ /* ************************************* */
+ 
+@@ -7782,6 +7860,7 @@ static int ring_setsockopt(struct socket *sock,
+     if(unlikely(enable_debug))
+       printk("[PF_RING] * SO_ACTIVATE_RING *\n");
+ 
++#ifdef HAVE_PF_RING_ZC
+     if(pfr->zc_device_entry != NULL && !pfr->ring_active /* already active, no check */) {
+       int i;
+ 
+@@ -7808,6 +7887,9 @@ static int ring_setsockopt(struct socket *sock,
+     } else {
+       pfr->ring_active = 1;
+     }
++#else
++    pfr->ring_active = 1;
++#endif
+ 
+     found = 1;
+     break;
+@@ -7860,6 +7942,7 @@ static int ring_setsockopt(struct socket *sock,
+     break;
+ 
+   case SO_MAP_DNA_DEVICE:
++#ifdef HAVE_DNA
+     if(optlen != sizeof(zc_dev_mapping))
+       return(-EINVAL);
+     else {
+@@ -7870,6 +7953,9 @@ static int ring_setsockopt(struct socket *sock,
+       else
+ 	ret = pfring_map_zc_dev(pfr, &mapping), found = 1;
+     }
++#else
++    return(-EINVAL);
++#endif
+     break;
+ 
+   case SO_SET_MASTER_RING:
+@@ -8053,6 +8139,7 @@ static int ring_setsockopt(struct socket *sock,
+     break;
+ 
+   case SO_CREATE_DNA_CLUSTER:
++#ifdef HAVE_DNA
+     {
+       struct create_dna_cluster_info cdnaci;
+ 
+@@ -8115,9 +8202,14 @@ static int ring_setsockopt(struct socket *sock,
+     }
+ 
+     found = 1;
++#else
++    printk("[PF_RING] SO_CREATE_DNA_CLUSTER not supported\n");
++    return(-EINVAL);
++#endif
+     break;
+ 
+   case SO_ATTACH_DNA_CLUSTER:
++#ifdef HAVE_DNA
+     {
+       struct attach_dna_cluster_info adnaci;
+ 
+@@ -8148,9 +8240,14 @@ static int ring_setsockopt(struct socket *sock,
+     }
+ 
+     found = 1;
++#else
++    printk("[PF_RING] SO_ATTACH_DNA_CLUSTER not supported\n");
++    return(-EINVAL);
++#endif
+     break;
+ 
+   case SO_WAKE_UP_DNA_CLUSTER_SLAVE:
++#ifdef HAVE_DNA
+     {
+       u_int32_t slave_id;
+ 
+@@ -8160,6 +8257,10 @@ static int ring_setsockopt(struct socket *sock,
+       if(pfr->dna_cluster && slave_id < pfr->dna_cluster->num_slaves && pfr->dna_cluster->slave_waitqueue[slave_id])
+         wake_up_interruptible(pfr->dna_cluster->slave_waitqueue[slave_id]);
+     }
++#else
++    printk("[PF_RING] SO_WAKE_UP_DNA_CLUSTER_SLAVE not supported\n");
++    return(-EINVAL);
++#endif
+     break;
+ 
+   case SO_CREATE_CLUSTER_REFEREE:
+@@ -8528,17 +8629,23 @@ static int ring_getsockopt(struct socket *sock,
+ 
+   case SO_GET_MAPPED_DNA_DEVICE:
+     {
++#ifdef HAVE_DNA
+       if((pfr->zc_dev == NULL) || (len < sizeof(zc_memory_info)))
+ 	return(-EFAULT);
+ 
+       if(copy_to_user(optval, &pfr->zc_dev->mem_info, sizeof(zc_memory_info)))
+ 	return(-EFAULT);
++#else
++      printk("[PF_RING] SO_GET_MAPPED_DNA_DEVICE not supported\n");
++      return(-EFAULT);
++#endif
+ 
+       break;
+     }
+ 
+   case SO_GET_EXTRA_DMA_MEMORY:
+     {
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+       u_int64_t num_slots, slot_len, chunk_len;
+ 
+       if(pfr->zc_dev == NULL || pfr->zc_dev->hwdev == NULL)
+@@ -8574,6 +8681,10 @@ static int ring_getsockopt(struct socket *sock,
+ 	pfr->extra_dma_memory = NULL;
+         return(-EFAULT);
+       }
++#else
++      printk("[PF_RING] SO_GET_EXTRA_DMA_MEMORY not supported\n");
++      return(-EINVAL);
++#endif
+ 
+       break;
+     }
+@@ -8631,10 +8742,14 @@ static int ring_getsockopt(struct socket *sock,
+   case SO_GET_BOUND_DEVICE_ADDRESS:
+     if(len < ETH_ALEN) return(-EINVAL);
+ 
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+     if(pfr->zc_dev != NULL) {
+       if(copy_to_user(optval, pfr->zc_dev->device_address, 6))
+ 	return(-EFAULT);
+     } else if((pfr->ring_netdev != NULL)
++#else
++    if((pfr->ring_netdev != NULL)
++#endif
+ 	      && (pfr->ring_netdev->dev != NULL)) {
+       char lowest_if_mac[ETH_ALEN] = { 0 };
+       char magic_if_mac[ETH_ALEN];
+@@ -9543,8 +9658,12 @@ static int __init ring_init(void)
+ 
+   INIT_LIST_HEAD(&virtual_filtering_devices_list);
+   INIT_LIST_HEAD(&ring_aware_device_list);
++#ifdef HAVE_PF_RING_ZC
+   INIT_LIST_HEAD(&zc_devices_list);
++#endif
++#ifdef HAVE_DNA
+   INIT_LIST_HEAD(&dna_cluster_list);
++#endif
+   INIT_LIST_HEAD(&cluster_referee_list);
+ 
+   for(i = 0; i < NUM_FRAGMENTS_HASH_SLOTS; i++)
+-- 
+1.8.3.1
+

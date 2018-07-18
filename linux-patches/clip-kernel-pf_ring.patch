@@ -1,0 +1,39 @@
+diff -Nru linux-3.14_init/net/Kconfig linux-3.14/net/Kconfig
+--- linux-3.14_init/net/Kconfig	2016-01-19 16:05:26.839700635 +0100
++++ linux-3.14/net/Kconfig	2016-01-21 13:29:11.897210692 +0100
+@@ -363,9 +363,12 @@
+ source "net/ceph/Kconfig"
+ source "net/nfc/Kconfig"
+ 
++source "net/pf_ring/Kconfig
+ 
+ endif   # if NET
+ 
+ # Used by archs to tell that they support BPF_JIT
+ config HAVE_BPF_JIT
+ 	bool
++
++
+diff -Nru linux-3.14_init/net/Makefile linux-3.14/net/Makefile
+--- linux-3.14_init/net/Makefile	2016-01-19 16:05:26.839700635 +0100
++++ linux-3.14/net/Makefile	2016-01-21 13:31:50.433207457 +0100
+@@ -72,3 +72,5 @@
+ obj-$(CONFIG_VSOCKETS)	+= vmw_vsock/
+ obj-$(CONFIG_NET_MPLS_GSO)	+= mpls/
+ obj-$(CONFIG_HSR)		+= hsr/
++
++obj-$(CONFIG_PF_RING_SUPPORT)	+= pf_ring/
+diff -Nru linux-3.14_init/net/pf_ring/Kconfig linux-3.14/net/pf_ring/Kconfig
+--- linux-3.14_init/net/pf_ring/Kconfig	1970-01-01 01:00:00.000000000 +0100
++++ linux-3.14/net/pf_ring/Kconfig	2016-01-21 13:27:52.257212317 +0100
+@@ -0,0 +1,5 @@
++config PF_RING_SUPPORT
++        tristate "PF_RING support"
++        help
++          This enable pf_ring module.
++
+diff -Nru linux-3.14_init/net/pf_ring/Makefile linux-3.14/net/pf_ring/Makefile
+--- linux-3.14_init/net/pf_ring/Makefile	1970-01-01 01:00:00.000000000 +0100
++++ linux-3.14/net/pf_ring/Makefile	2016-01-21 13:32:13.523206985 +0100
+@@ -0,0 +1 @@
++obj-$(CONFIG_PF_RING_SUPPORT) := pf_ring.o

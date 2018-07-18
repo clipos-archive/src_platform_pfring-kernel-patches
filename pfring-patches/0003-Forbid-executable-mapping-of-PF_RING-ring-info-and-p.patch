@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DGA-MI <clipos@ssi.gouv.fr>
+Date: Mon, 22 Aug 2016 17:48:49 +0200
+Subject: [PATCH 3/4] Forbid executable mapping of PF_RING ring info and
+ packets
+---
+ kernel/pf_ring.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/kernel/pf_ring.c b/kernel/pf_ring.c
+index b65c840..839f477 100644
+--- a/kernel/pf_ring.c
++++ b/kernel/pf_ring.c
+@@ -4870,6 +4870,7 @@ static int ring_create(
+   if(sk == NULL)
+     goto out;
+ 
++  SOCK_INODE(sock)->i_mode &= ~S_IXUGO;
+   sock->ops = &ring_ops;
+   sock_init_data(sock, sk);
+ #if(LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,11))
+-- 
+1.8.3.1
+

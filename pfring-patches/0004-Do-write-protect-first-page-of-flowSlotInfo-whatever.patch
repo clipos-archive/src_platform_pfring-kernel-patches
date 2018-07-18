@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: DGA-MI <clipos@ssi.gouv.fr>
+Date: Mon, 22 Aug 2016 17:48:00 +0200
+Subject: [PATCH 4/4] Do write-protect first page of flowSlotInfo whatever
+ protections are asked for the mapping
+
+No changes to userspace are required. In particular it is still possible to map
+the whole flowSlotInfo read-write, like libpfring does. However userspace now
+receives SIGBUS on any attempt to write to the kernel-owned first
+page of flowSlotInfo.
+---
+ kernel/pf_ring.c | 57 +++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/pf_ring.c b/kernel/pf_ring.c
+index 839f477..f3ff1c5 100644
+--- a/kernel/pf_ring.c
++++ b/kernel/pf_ring.c
+@@ -6154,6 +6154,7 @@ unsigned long kvirt_to_pa(unsigned long adr)
+ #endif
+ 
+ /* ************************************* */
++#if defined(HAVE_PF_RING_ZC) || defined(HAVE_DNA)
+ 
+ static int do_memory_mmap(struct vm_area_struct *vma, unsigned long start_off, unsigned long size,
+                           char *ptr, u_int ptr_pg_off, u_int flags, int mode)
+@@ -6203,6 +6204,33 @@ static int do_memory_mmap(struct vm_area_struct *vma, unsigned long start_off, u
+   return(0);
+ }
+ 
++#endif
++/* ************************************* */
++
++static int ring_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
++{
++  int err = 0;
++  struct socket *sock = NULL;
++  struct pf_ring_socket *pfr = NULL;
++  sock = sock_from_file(vma->vm_file, &err);
++  BUG_ON(sock == NULL);
++
++  pfr = ring_sk(sock->sk);
++  BUG_ON(pfr == NULL);
++  BUG_ON(pfr->ring_memory == NULL);
++
++  if(vmalloc_to_page(pfr->ring_memory) == vmf->page)
++    return(VM_FAULT_SIGBUS);
++
++  return(0);
++}
++
++/* ************************************* */
++
++static struct vm_operations_struct ring_vm_ops = {
++  .page_mkwrite = ring_page_mkwrite,
++};
++
+ /* ************************************* */
+ 
+ static int ring_mmap(struct file *file,
+@@ -6328,6 +6356,12 @@ static int ring_mmap(struct file *file,
+       }
+ #endif
+ 
++      /* VM_SHARED is required for ring_page_mkwrite() to be properly called on write attempts. */
++      if(!(vma->vm_flags & VM_SHARED)) {
++        printk("[PF_RING] %s() failed: trying to map ring memory without MAP_SHARED! %lu \n", __FUNCTION__, vma->vm_flags);
++        return(-EACCES);
++      }
++
+       if(pfr->ring_memory == NULL) {
+         if(ring_alloc_mem(sk) != 0) {
+           printk("[PF_RING] %s(): unable to allocate memory\n", __FUNCTION__);
+@@ -6346,8 +6380,29 @@ static int ring_mmap(struct file *file,
+         printk("[PF_RING] mmap [slot_len=%d][tot_slots=%d] for ring on device %s\n",
+ 	       pfr->slots_info->slot_len, pfr->slots_info->min_num_slots, pfr->ring_netdev->dev->name);
+ 
+-      if((rc = do_memory_mmap(vma, 0, size, (void *) pfr->ring_memory, 0, VM_LOCKED, 0)) < 0)
++      vma->vm_flags |= VM_LOCKED;
++      /*
++       * See the layout of struct flowSlotInfo. The kernel side is alone in the first 4096 bytes,
++       * which allows us to protect it against changes from userspace.
++       */
++      BUILD_BUG_ON(PAGE_SIZE != 4096);
++
++      vma->vm_page_prot = vm_get_page_prot(vma->vm_flags & ~VM_WRITE);
++      rc = remap_vmalloc_range_partial(vma, vma->vm_start, pfr->ring_memory, PAGE_SIZE);
++      if(rc < 0) {
++        printk("[PF_RING] mmap : remap_vmalloc_range_partial 1 fails (%d)\n",rc);
+         return(rc);
++      }
++      if(size > PAGE_SIZE) {
++        vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
++        rc = remap_vmalloc_range_partial(vma, vma->vm_start + PAGE_SIZE, (void *) ( ((unsigned long)pfr->ring_memory) + PAGE_SIZE), size - PAGE_SIZE);
++        if(rc < 0) {
++          printk("[PF_RING] mmap : remap_vmalloc_range_partial 2 fails (%d)\n",rc);
++          return(rc);
++        }
++      /* page_mkwrite() will prevent userspace from mapping RW the kernel side of struct flowSlotInfo. */
++      }
++      vma->vm_ops = &ring_vm_ops;
+ 
+       break;
+     case 1:
+-- 
+1.8.3.1
+
